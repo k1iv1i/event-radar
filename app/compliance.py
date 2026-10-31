@@ -45,7 +45,7 @@ def sanitize(text: str) -> str:
     return text
 
 
-def build_statement(event: dict, propositions: list[dict]) -> str:
+def build_statement(event: dict, propositions: list[dict], counts: dict | None = None) -> str:
     """由事件状态与命题证据生成中性结论陈述（模板化、可追溯、无建议）。"""
     status_cn = STATUS_CN.get(event["status"], event["status"])
     latest = event["latest_disclose"] or "未知"
@@ -53,7 +53,7 @@ def build_statement(event: dict, propositions: list[dict]) -> str:
     for p in propositions:
         v = VERDICT_CN.get(p["verdict"], p["verdict"])
         lines.append(f"- 命题「{p['proposition']}」：{v}（依据：{p['by_source']}，{p['by_time'][:10]}，证据权重 {p['by_weight']}）")
-    counts = event.get("evidence_counts") or {}
+    counts = counts or {}
     lines.append(
         "证据构成：事实 {fact} 条 / 观点 {opinion} 条 / 推测 {speculation} 条 / 传闻 {rumor} 条。".format(
             **{k: counts.get(k, 0) for k in ("fact", "opinion", "speculation", "rumor")}

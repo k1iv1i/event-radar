@@ -23,10 +23,11 @@ def _evidence_weight(doc: dict, claim_type: str) -> int:
 def _event_topic(event: dict) -> str:
     conclusion = event.get("conclusion") or "{}"
     try:
-        props = " ".join(p["proposition"] for p in json.loads(conclusion).get("propositions", []))
+        props = json.loads(conclusion).get("propositions") or {}
+        prop_text = " ".join(p["proposition"] for p in props.values())
     except Exception:
-        props = ""
-    return f"{event.get('title', '')} {props}"
+        prop_text = ""
+    return f"{event.get('title', '')} {prop_text}"
 
 
 def _bucket_of(text: str) -> str:
@@ -37,13 +38,24 @@ def _bucket_of(text: str) -> str:
 
 
 def _score_candidates(events: list[dict], claim: dict) -> list[tuple[dict, int]]:
-    """规则打分：主体交集(每个+2) + 关键词桶一致(+1)。"""
+    """规则打分：主体交集(每个+2) + 命题/标题一致(+3) + 关键词桶一致(+1)。"""
     claim_bucket = _bucket_of(claim.get("core_proposition", "") + claim.get("summary", "") + claim.get("quote", ""))
+    claim_prop = llm._normalize_proposition(claim.get("core_proposition") or "")
     scored = []
     for e in events:
-        shared = set(e.get("entity_tags", [])) & set(claim.get("subjects", []))
-        bucket_match = 1 if claim_bucket and claim_bucket == _bucket_of(_event_topic(e)) else 0
-        score = 2 * len(shared) + bucket_match
+        shared = set(llm._as_list(e.get("entity_tags"))) & set(llm._as_list(claim.get("subjects")))
+        # 命题或标题完全一致且足够具体（≥3 字、非通用词）→ 强合并信号
+        topic = _event_topic(e)
+        prop_match = 0
+        if len(claim_prop) >= 3 and claim_prop not in {"公告", "新闻", "报道", "快讯", "研报"}:
+            try:
+                props = json.loads(e.get("conclusion") or "{}").get("propositions") or {}
+            except Exception:
+                props = {}
+            if claim_prop in props or claim_prop == llm._normalize_proposition(e.get("title") or ""):
+                prop_match = 3
+        bucket_match = 1 if claim_bucket and claim_bucket == _bucket_of(topic) else 0
+        score = 2 * len(shared) + prop_match + bucket_match
         if score > 0:
             scored.append((e, score))
     scored.sort(key=lambda x: -x[1])
@@ -77,7 +89,7 @@ def _create_event(claim: dict) -> dict:
     event = {
         "event_id": "evt_" + uuid.uuid4().hex[:10],
         "title": title or "未命名事件",
-        "entity_tags": json.dumps(claim.get("subjects", []), ensure_ascii=False),
+        "entity_tags": json.dumps(llm._as_list(claim.get("subjects")), ensure_ascii=False),
         "status": "emerging",
         "conclusion": "{}",
         "event_time": claim.get("event_time") or "",
@@ -227,10 +239,12 @@ def _recompute_status(event: dict) -> None:
         if status == "unverified":
             has_fact = db.count_event_claims(event["event_id"]).get("fact", 0) > 0
             status = "developing" if has_fact else "emerging"
+    event["status"] = status  # 先定状态，statement 引用它
     conclusion["evidence_counts"] = db.count_event_claims(event["event_id"])
-    conclusion["statement"] = compliance.build_statement(event, list(propositions.values()))
+    conclusion["statement"] = compliance.build_statement(
+        event, list(propositions.values()), conclusion["evidence_counts"]
+    )
     event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
-    event["status"] = status
 
 
 def ingest_document(meta: dict, body: str) -> dict:
@@ -312,7 +326,9 @@ def apply_expiry(event: dict) -> bool:
         return False
     event["status"] = "expired"
     conclusion = json.loads(event.get("conclusion") or "{}")
-    conclusion["statement"] = compliance.build_statement(event, (conclusion.get("propositions") or {}).values())
+    conclusion["statement"] = compliance.build_statement(
+        event, (conclusion.get("propositions") or {}).values(), conclusion.get("evidence_counts")
+    )
     event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
     db.insert_event(event)
     db.insert_version({"event_id": event["event_id"], "change_type": "expired",

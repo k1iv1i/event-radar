@@ -26,9 +26,10 @@ def test_sanitize_strips_advice_phrases():
 def test_claim_types_strictly_separated_and_traceable():
     """事实/观点/推测/传闻逐条可溯：每条主张绑定来源文档与原文引用。"""
     from app import db as _db
-    make_doc("传闻稿", "据传公司将被收购。", source="社交媒体", publish_time="2025-02-01")
+    make_doc("传闻稿", "据传公司将被收购。", source="社交媒体", publish_time="2025-02-01",
+             proposition_hint="公司被收购（市场传闻）")
     make_doc("澄清公告", "公司公告：上述传闻不属实。", source="公司公告", publisher="X公司",
-             publish_time="2025-02-02")
+             publish_time="2025-02-02", proposition_hint="公司被收购（市场传闻）")
     event = db.list_events()[0]
     claims = _db.list_claims_for_event(event["event_id"])
     assert len(claims) >= 2

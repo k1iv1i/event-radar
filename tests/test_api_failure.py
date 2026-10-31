@@ -58,8 +58,8 @@ def test_unknown_source_gets_default_weight():
 
 def test_duplicate_replay_is_idempotent():
     """同一文档重复入库不产生重复事件结论（幂等重放）。"""
-    r1 = make_doc("传闻", "据传X将被收购。", publish_time="2025-06-01")
-    r2 = make_doc("传闻", "据传X将被收购。", publish_time="2025-06-01")
+    r1 = make_doc("传闻", "据传X将被收购。", publish_time="2025-06-01", proposition_hint="X公司被收购")
+    r2 = make_doc("传闻", "据传X将被收购。", publish_time="2025-06-01", proposition_hint="X公司被收购")
     events = db.list_events()
     # 相同内容 -> 合并为同一事件，主张数翻倍但事件数不变
     assert len(events) == 1

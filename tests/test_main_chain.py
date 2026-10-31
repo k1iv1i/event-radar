@@ -99,6 +99,19 @@ def test_expiry_marks_event_once():
     assert pipeline.apply_expiry(event) is False  # 只通知一次
 
 
+def test_different_entities_never_merge():
+    """回归：主体/话题均不交集的文档必须各自成事件（曾因 JSON 字符串字符集交集 bug 全部合并）。"""
+    make_doc("成飞传闻", "据传成飞集团将借壳成飞集成上市。", publish_time="2020-05-01")
+    make_doc("左江立案", "左江科技收到证监会立案告知书。", source="公司公告", publisher="*ST左江",
+             publish_time="2023-12-01")
+    make_doc("超导澄清", "法尔胜公告：公司不涉及室温超导业务。", source="公司公告", publisher="法尔胜",
+             publish_time="2023-08-03")
+    events = db.list_events()
+    assert len(events) == 3  # 三个独立事件，不得互相合并
+    tags = " ".join(str(e["entity_tags"]) for e in events)
+    assert "成飞" in tags and "左江" in tags and "法尔胜" in tags
+
+
 def test_offline_cache_replay_is_deterministic(tmp_path, monkeypatch):
     """缓存回放：同样的原始文档两次引导应得到相同事件数与状态。"""
     import json

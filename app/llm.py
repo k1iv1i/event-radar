@@ -65,6 +65,19 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def _as_list(x) -> list:
+    """entity_tags / subjects 在 DB 中是 JSON 字符串，统一解析为列表（兼容双重编码）。"""
+    if isinstance(x, str):
+        try:
+            parsed = json.loads(x)
+            if isinstance(parsed, str):  # 双重编码：再解一层
+                parsed = json.loads(parsed)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return list(x) if x else []
+
+
 def _client():
     from openai import OpenAI
 
@@ -228,11 +241,11 @@ def judge_merge(events: list[dict], claim: dict) -> dict:
             result = None
     if result is None:
         # 降级：主体交集或话题关键词一致即合并到第一个候选事件
-        claim_text = " ".join(str(x) for x in claim.get("subjects", [])) + " " + str(claim.get("core_proposition", ""))
+        claim_text = " ".join(str(x) for x in _as_list(claim.get("subjects"))) + " " + str(claim.get("core_proposition", ""))
         bucket = next((b for b, kws in KEYWORD_BUCKETS.items() if any(k in claim_text.lower() for k in kws)), "")
         cand = None
         for e in events:
-            if set(e.get("entity_tags", [])) & set(claim.get("subjects", [])):
+            if set(_as_list(e.get("entity_tags"))) & set(_as_list(claim.get("subjects"))):
                 cand = e
                 break
             if bucket and bucket in (e.get("topic") or ""):

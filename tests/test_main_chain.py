@@ -94,7 +94,10 @@ def test_expiry_marks_event_once():
     db.insert_event(event)
     assert pipeline.apply_expiry(event) is True
     event = db.get_event(event["event_id"])
-    assert event["status"] == "expired"
+    concl = json.loads(event["conclusion"])
+    assert concl["expired"] is True  # 过期标记进结论
+    assert "已过期" in concl["statement"]  # 结论陈述追加提示
+    assert event["status"] in ("emerging", "developing")  # 证据判定不被过期覆盖
     assert db.has_notification_of_type(event["event_id"], "expiry")
     assert pipeline.apply_expiry(event) is False  # 只通知一次
 

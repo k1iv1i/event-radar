@@ -173,7 +173,7 @@ a:hover { text-decoration: underline; }
 .change-corrected { color: var(--s-serious); border-color: rgba(236,131,90,.45); }
 .change-disputed { color: var(--s-warning); border-color: rgba(250,178,25,.45); }
 .change-expired { color: var(--v-expired); border-color: var(--baseline); }
-.change-proposition_added, .change-create { color: var(--accent); border-color: rgba(57,135,229,.45); }
+.change-proposition_added, .change-create, .change-merge { color: var(--accent); border-color: rgba(57,135,229,.45); }
 
 /* ---------- 内容区 ---------- */
 .content { flex: 1; padding: 24px 28px; max-width: 980px; min-width: 0; }

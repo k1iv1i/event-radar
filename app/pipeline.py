@@ -374,6 +374,12 @@ def _merge_events(keep: dict, absorb: dict, reason: str = "") -> dict:
     keep["latest_disclose"] = max(cands) if cands else ""
 
     keep["conclusion"] = json.dumps(conclusion, ensure_ascii=False)  # 先落盘并集，再重算状态
+    # 标题更新：取合并后最高权威权重的证实/完结命题，避免标题停留在窄命题上
+    named = [p for p in props.values() if p.get("verdict") in ("confirmed", "closed")]
+    pool = named or list(props.values())
+    if pool:
+        top = max(pool, key=lambda p: p.get("authoritative_weight", 0))
+        keep["title"] = top.get("proposition", keep["title"])[:46]
     db.move_claims(absorb["event_id"], keep["event_id"])
     db.move_versions(absorb["event_id"], keep["event_id"])
     _recompute_status(keep)
@@ -416,7 +422,11 @@ def consolidate_events(max_rounds: int = 3) -> list[dict]:
 
 
 def apply_expiry(event: dict) -> bool:
-    """过期处理：非完结事件超过 60 天无更新 -> 标记过期并通知（仅一次）。"""
+    """过期处理：非完结事件超过 60 天无更新 -> 结论追加过期提示并通知（仅一次）。
+
+    过期是时间维度的补充标记：不覆盖证据判定（disputed/confirmed 等状态保留），
+    而是在结论陈述中追加提示，并单独发送通知。
+    """
     if event.get("status") == "closed":
         return False
     try:
@@ -427,19 +437,20 @@ def apply_expiry(event: dict) -> bool:
         return False
     if db.has_notification_of_type(event["event_id"], "expiry"):
         return False
-    event["status"] = "expired"
     conclusion = json.loads(event.get("conclusion") or "{}")
-    conclusion["statement"] = compliance.build_statement(
+    conclusion["expired"] = True
+    statement = compliance.build_statement(
         event, (conclusion.get("propositions") or {}).values(), conclusion.get("evidence_counts")
     )
+    conclusion["statement"] = statement + "\n注：该事件已超过 60 天无新证据，标记为【已过期】；证据判定不受影响，时间线可随时回溯。"
     event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
     db.insert_event(event)
     db.insert_version({"event_id": event["event_id"], "change_type": "expired",
-                       "trigger_doc_id": "", "summary": "超过 60 天无更新，事件标记为已过期",
+                       "trigger_doc_id": "", "summary": "超过 60 天无更新，标记为已过期（证据判定保留）",
                        "conclusion_before": "", "conclusion_after": event["conclusion"],
                        "created_at": now_iso()})
     db.insert_notification({"event_id": event["event_id"], "notif_type": "expiry",
                             "title": f"事件过期：{event['title']}",
-                            "message": f"「{event['title']}」已超过 60 天无新证据，标记为已过期。结论仍保留证据时间线，可随时回溯。",
+                            "message": f"「{event['title']}」已超过 60 天无新证据，标记为已过期。证据判定不受影响，时间线可随时回溯。",
                             "created_at": now_iso()})
     return True

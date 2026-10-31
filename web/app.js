@@ -9,7 +9,8 @@ const STATUS_ICON = { emerging: "◌", developing: "◔", confirmed: "✓", deni
 const VERDICT_ICON = { confirmed: "✓", denied: "✕", corrected: "↻", closed: "●",
   disputed: "⚠", unverified: "·" };
 const CHANGE_CN = { create: "事件创建", proposition_added: "新增命题", update: "证据更新", rumor: "传闻证据",
-  confirmed: "证实", denied: "否认", corrected: "更正", closed: "完结", disputed: "证据冲突", expired: "过期" };
+  confirmed: "证实", denied: "否认", corrected: "更正", closed: "完结", disputed: "证据冲突", expired: "过期",
+  merge: "事件合并" };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -48,10 +49,13 @@ async function loadEvents(selectId) {
           <span class="verdict-badge verdict-${p.verdict}">${VERDICT_ICON[p.verdict] || "·"}${verdictCn(p.verdict)}</span>
           <span class="prop-text" title="${esc(p.proposition)}">${esc(p.proposition)}</span>
         </div>`).join("");
+    const expiredBadge = e.conclusion.expired
+      ? `<span class="status-badge status-expired">○已过期</span>` : "";
     return `<div class="event-card" data-id="${e.event_id}">
       <h3>${esc(e.title)}</h3>
       <div class="meta">
         <span class="status-badge status-${e.status}">${STATUS_ICON[e.status] || "·"}${STATUS_CN[e.status] || e.status}</span>
+        ${expiredBadge}
         <span>更新 ${fmtTime(e.updated_at)}</span>
       </div>
       <div class="props">${props}</div>
@@ -127,8 +131,10 @@ async function selectEvent(id) {
       <pre>${esc(doc.body)}</pre>
     </details>`).join("");
 
+  const expiredBadge = concl.expired
+    ? `<span class="status-badge status-expired">○已过期</span>` : "";
   detail.innerHTML = `
-    <h2>${esc(e.title)} <span class="status-badge status-${e.status}">${STATUS_ICON[e.status] || "·"}${STATUS_CN[e.status] || e.status}</span></h2>
+    <h2>${esc(e.title)} <span class="status-badge status-${e.status}">${STATUS_ICON[e.status] || "·"}${STATUS_CN[e.status] || e.status}</span>${expiredBadge}</h2>
     <div class="entity-tags">涉事主体：${esc((JSON.parse(e.entity_tags || "[]") || []).join("、") || "—")}</div>
     <div class="ts-row">
       <span><span class="ts-label">事件发生</span><b>${fmtTime(e.event_time)}</b></span>
@@ -213,6 +219,7 @@ async function submitIngest() {
     box.innerHTML = `
       <div class="ir-item">✅ 已入库并抽取 <b>${r.claims}</b> 条主张（抽取方式：<b>${r.extraction_method}</b>${r.fetch_status === "degraded" ? "，⚠ LLM 接口异常已降级为规则抽取" : ""}）</div>
       ${r.changes.map((c) => `<div class="ir-item">· 事件「${esc(c.event_id)}」：命题「${esc(c.proposition)}」记为 ${esc(TYPE_CN[c.claim_type])}</div>`).join("")}
+      ${(r.merged_events || []).map((m) => `<div class="ir-item">🔗 事件合并：将独立事件并入同一事件线</div>`).join("")}
       ${r.notifications.length ? `<div class="ir-item">🔔 触发 ${r.notifications.length} 条通知（${r.notifications.map((n) => esc(n.message)).join("；")}）</div>` : `<div class="ir-item">🔕 未改变任何事件结论，无新通知</div>`}
     `;
     loadEvents(); loadStats();

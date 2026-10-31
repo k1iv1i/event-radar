@@ -1,9 +1,9 @@
 __pycache__/
 *.pyc
 .env
-data/timeline.db
 data/extracted/
 .pytest_cache/
 .venv/
 node_modules/
 .DS_Store
+# data/timeline.db 有意提交：演示数据库随代码分发，保证部署版与演示版完全一致

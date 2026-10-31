@@ -82,10 +82,10 @@ MERGE_PROMPT = """你是投资事件合并判定器。判断新主张应并入�
 PAIR_MERGE_PROMPT = """你是投资事件合并判定器。判断两个已建立的事件是否属于同一事件线，应当合并。
 事件 A：title={title_a}，topic={topic_a}
 事件 B：title={title_b}，topic={topic_b}
-判定规则（从宽合并，事件按"事件线"组织）：
+判定规则（事件按"事件线"组织）：
 1. 两事件共享任一公司主体，且涉及该公司的监管、经营业绩、股价、退市、诉讼、媒体质疑等事件线 → 合并（merge）；
 2. 两事件话题实质相同（同一科学发现与其市场反应、同一重组的各阶段）→ 合并（merge）；
-3. 仅当两事件是明显不同的独立事项（不同公司且话题无关、或同公司完全无关的另一业务线，如"成飞集成锂电重组"与"成飞集团借壳上市"）才输出 keep。
+3. **不同公司的两事件绝不合并**；同公司但完全无关的另一业务线（如"成飞集成锂电重组"与"成飞集团借壳上市"）输出 keep。
 只输出 JSON：{{"decision":"merge|keep","reason":"一句中文理由"}}"""
 
 
@@ -327,13 +327,10 @@ def judge_event_pair(event_a: dict, event_b: dict) -> dict:
         except Exception:
             result = None
     if result is None:
-        # 降级：共享主体或话题关键词一致 → 合并
+        # 降级：仅共享规范主体才合并（话题关键词规则过于激进，会把不同公司的事件误并）
         shared = set(_as_list(event_a.get("entity_tags"))) & set(_as_list(event_b.get("entity_tags")))
-        topic_b = (event_b.get("topic") or "").lower()
-        kws = [k for kws in KEYWORD_BUCKETS.values() for k in kws]
-        same_topic = any(k in (event_a.get("topic") or "").lower() and k in topic_b for k in kws if len(k) >= 3)
-        if shared or same_topic:
-            result = {"decision": "merge", "reason": "降级规则：共享主体或话题关键词"}
+        if shared:
+            result = {"decision": "merge", "reason": "降级规则：共享主体"}
         else:
-            result = {"decision": "keep", "reason": "降级规则：无共享主体或话题"}
+            result = {"decision": "keep", "reason": "降级规则：无共享主体"}
     return result

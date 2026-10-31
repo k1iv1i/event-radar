@@ -8,8 +8,8 @@ COPY . .
 ENV DATA_DIR=/app/data
 ENV DB_PATH=/app/data/timeline.db
 
-# 用缓存抽取结果重建演示库（不依赖运行时 LLM 调用，接口失败自动降级）
-RUN python -m scripts.bootstrap_demo --offline || true
+# 演示库已随仓库提交（data/timeline.db）；仅当缺失时才用缓存抽取结果重建
+RUN if [ ! -f data/timeline.db ]; then python -m scripts.bootstrap_demo --offline || true; fi
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

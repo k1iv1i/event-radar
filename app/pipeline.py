@@ -374,12 +374,6 @@ def _merge_events(keep: dict, absorb: dict, reason: str = "") -> dict:
     keep["latest_disclose"] = max(cands) if cands else ""
 
     keep["conclusion"] = json.dumps(conclusion, ensure_ascii=False)  # 先落盘并集，再重算状态
-    # 标题更新：取合并后最高权威权重的证实/完结命题，避免标题停留在窄命题上
-    named = [p for p in props.values() if p.get("verdict") in ("confirmed", "closed")]
-    pool = named or list(props.values())
-    if pool:
-        top = max(pool, key=lambda p: p.get("authoritative_weight", 0))
-        keep["title"] = top.get("proposition", keep["title"])[:46]
     db.move_claims(absorb["event_id"], keep["event_id"])
     db.move_versions(absorb["event_id"], keep["event_id"])
     _recompute_status(keep)
@@ -394,6 +388,34 @@ def _merge_events(keep: dict, absorb: dict, reason: str = "") -> dict:
     db.delete_event(absorb["event_id"])
     db.insert_event(keep)
     return keep
+
+
+def _normalize_titles() -> None:
+    """标题规范化（确定性）：仅当命题文本包含事件首要主体时才改名，避免把事件改名为边缘命题。"""
+    for e in db.list_events():
+        concl = json.loads(e.get("conclusion") or "{}")
+        if not isinstance(concl, dict):
+            continue
+        props = concl.get("propositions") or {}
+        tags = llm._as_list(e.get("entity_tags"))
+        primary = tags[0] if tags else ""
+        named = [p for p in props.values()
+                 if p.get("verdict") in ("confirmed", "closed")
+                 and primary and (primary in (p.get("proposition") or "")
+                                  or primary[:2] in (p.get("proposition") or ""))]
+        if named:
+            top = max(named, key=lambda p: (
+                p.get("by_weight", 0) or p.get("authoritative_weight", 0),
+                p.get("claims", 0),
+                len(p.get("proposition", "")),
+            ))
+            new_title = (top.get("proposition") or e["title"])[:46]
+            if new_title != e["title"]:
+                e["title"] = new_title
+                concl["statement"] = compliance.build_statement(
+                    e, list(props.values()), concl.get("evidence_counts"))
+                e["conclusion"] = json.dumps(concl, ensure_ascii=False)
+                db.insert_event(e)
 
 
 def consolidate_events(max_rounds: int = 3) -> list[dict]:
@@ -418,6 +440,7 @@ def consolidate_events(max_rounds: int = 3) -> list[dict]:
                 changed = True
         if not changed:
             break
+    _normalize_titles()
     return merged_log
 
 

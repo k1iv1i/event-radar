@@ -17,7 +17,7 @@ from app import config, db, pipeline  # noqa: E402
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--offline", action="store_true", help="仅用缓存抽取结果，不调用 LLM")
-    args = ap.parse_args(argv if argv is not None else [])
+    args = ap.parse_args(argv if argv is not None else sys.argv[1:])
     if args.offline:
         config.LLM_ENABLED = False
 
@@ -31,7 +31,7 @@ def main(argv=None):
     for p in files:
         meta = json.loads(p.read_text(encoding="utf-8"))
         body = meta.pop("body", "")
-        res = pipeline.ingest_document(meta, body)
+        res = pipeline.ingest_document(meta, body, doc_id=p.stem)  # 稳定 doc_id = 原始文件名
         print(f"  - {p.stem}: {res['claims']} 条主张 ({res['extraction_method']}), "
               f"{len(res['notifications'])} 条通知")
 

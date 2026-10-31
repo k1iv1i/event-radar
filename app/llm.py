@@ -13,15 +13,31 @@ from . import config, db
 # ---------- 领域别名表（演示事件范围，见 README 已知边界） ----------
 
 ENTITY_ALIASES = {
-    "成飞集团": ["成飞集团", "成飞"],
+    "成飞集团": ["成飞集团", "成都飞机工业", "成飞"],
     "成飞集成": ["成飞集成"],
     "中航电测": ["中航电测", "300114"],
-    "左江科技": ["左江科技", "*st左江", "st左江", "左江", "300799"],
+    "左江科技": ["左江科技", "*st左江", "st左江", "左江退", "左江", "300799"],
     "法尔胜": ["法尔胜", "000890"],
     "百利电气": ["百利电气", "600468"],
     "国缆检测": ["国缆检测", "301289"],
+    "贵航股份": ["贵航股份"],
     "韩国团队": ["韩国", "lk-99", "lk99"],
 }
+
+
+def canonicalize_subjects(subs) -> list[str]:
+    """把 LLM 抽取的任意主体名映射到规范名（最长别名优先，避免'成飞'抢匹配'成飞集成'）。"""
+    out = []
+    for s in subs or []:
+        s_l = str(s).lower().strip()
+        best, best_len = None, 0
+        for canon, aliases in ENTITY_ALIASES.items():
+            for a in aliases:
+                a_l = a.lower()
+                if a_l and (a_l in s_l or (len(s_l) >= 2 and s_l in a_l)) and len(a_l) > best_len:
+                    best, best_len = canon, len(a_l)
+        out.append(best or s)
+    return list(dict.fromkeys(out))
 
 KEYWORD_BUCKETS = {
     "重组借壳": ["借壳", "重组", "注入", "发行股份购买", "收购"],
@@ -55,8 +71,8 @@ EXTRACT_PROMPT = """你是投资事件情报抽取器。输入一篇金融文档
 只输出 JSON：{"claims":[...]}"""
 
 MERGE_PROMPT = """你是投资事件合并判定器。判断新主张应并入哪个已有事件，还是创建新事件。
-已有事件列表（JSON，含 id、title、propositions 命题与判定）：{events}
-新主张：type={type}，命题={proposition}，主体={subjects}，摘要={summary}
+已有事件列表（JSON，含 event_id、title、topic）：{events}
+新主张信息在用户消息的 JSON 中给出。
 判定规则：若新主张与某事件讨论同一件事（同一主体+同一事件实质，即使结论相反也应合并，如"否认传闻"应并入该传闻事件），输出 merge 并给出该事件 id；否则输出 new。
 只输出 JSON：{{"decision":"merge|new","event_id":"...或空","reason":"一句中文理由"}}"""
 
@@ -85,7 +101,7 @@ def _client():
 
 
 def _cache_path(doc_id: str):
-    return config.EXTRACTED_DIR / f"{doc_id}.json"
+    return config.EXTRACTED_DIR / f"extract_{doc_id}.json"
 
 
 def _load_cache(doc_id: str):
@@ -176,7 +192,7 @@ def rule_extract_claims(doc: dict) -> list[dict]:
 
 
 def extract_claims(doc: dict) -> tuple[list[dict], str]:
-    """返回 (claims, method)。method ∈ llm|cache|rule。"""
+    """返回 (claims, method)。method ∈ llm|cache|rule。缓存按稳定 doc_id 键控。"""
     doc_id = doc["doc_id"]
     payload = _load_cache(doc_id)
     if payload and payload.get("claims"):
@@ -199,7 +215,10 @@ def extract_claims(doc: dict) -> tuple[list[dict], str]:
             data = json.loads(resp.choices[0].message.content)
             claims = data.get("claims") or []
             if claims:
-                _save_cache(doc_id, {"claims": claims, "method": "llm", "model": config.DEEPSEEK_MODEL, "at": now_iso()})
+                # 缓存带文档元信息，便于审计与人工核验
+                _save_cache(doc_id, {"claims": claims, "method": "llm", "model": config.DEEPSEEK_MODEL,
+                                     "at": now_iso(), "doc_title": doc.get("title", ""),
+                                     "doc_disclose_time": doc.get("disclose_time", "")})
                 return claims, "llm"
         except Exception:
             pass  # 网络/额度/格式异常 -> 规则降级
@@ -208,11 +227,16 @@ def extract_claims(doc: dict) -> tuple[list[dict], str]:
 
 
 def judge_merge(events: list[dict], claim: dict) -> dict:
-    """灰区合并判定：规则打分后仍不明确时交给 LLM；失败则按主体匹配合并。"""
+    """灰区合并判定：规则打分后仍不明确时交给 LLM；失败则按主体匹配合并。
+
+    缓存键基于候选事件的标题/话题与主张内容（不含随机 event_id），跨运行可复用。
+    """
     key = hashlib.md5(
-        json.dumps([e["event_id"] for e in events] + [claim.get("core_proposition"), str(claim.get("subjects"))],
-                   ensure_ascii=False).encode()
-    ).hexdigest()
+        json.dumps(
+            sorted((e.get("title") or "") + "|" + (e.get("topic") or "") for e in events)
+            + [claim.get("core_proposition"), str(claim.get("subjects")), claim.get("summary")],
+            ensure_ascii=False).encode()
+    ).hexdigest()[:16]
     cache = _load_cache(f"merge_{key}")
     if cache and "decision" in cache:
         return cache["decision"]
@@ -248,7 +272,8 @@ def judge_merge(events: list[dict], claim: dict) -> dict:
             if set(_as_list(e.get("entity_tags"))) & set(_as_list(claim.get("subjects"))):
                 cand = e
                 break
-            if bucket and bucket in (e.get("topic") or ""):
+            # 话题匹配：用桶内关键词匹配话题文本，而不是桶名本身
+            if bucket and any(k in (e.get("topic") or "").lower() for k in KEYWORD_BUCKETS[bucket]):
                 cand = e
                 break
         result = {"decision": "merge", "event_id": cand["event_id"], "reason": "降级规则：主体/话题交集"} if cand else {

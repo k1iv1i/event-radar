@@ -116,6 +116,9 @@ def _verdict_for(claim: dict, doc: dict) -> str | None:
     if doc.get("source") not in ("公司公告", "官方公告", "互动易", "权威媒体"):
         return None
     text = (claim.get("summary") or "") + (claim.get("quote") or "")
+    # "不存在应披露而未披露的重大事项"是公告标准表述（事实声明），不是对传闻的否认
+    if "应披露" in text:
+        return "confirmed"
     if any(k in text for k in llm.DENY_KW):
         return "denied"
     if any(k in text for k in llm.CORRECT_KW):
@@ -247,9 +250,12 @@ def _recompute_status(event: dict) -> None:
     event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
 
 
-def ingest_document(meta: dict, body: str) -> dict:
-    """主链路入口。meta: title/source/publisher/url/publish_time/event_time。"""
-    doc_id = "doc_" + uuid.uuid4().hex[:10]
+def ingest_document(meta: dict, body: str, doc_id: str | None = None) -> dict:
+    """主链路入口。meta: title/source/publisher/url/publish_time/event_time。
+
+    doc_id 不传时随机生成（在线入库）；bootstrap 回放时传稳定文件名，便于缓存复用与审计。
+    """
+    doc_id = doc_id or "doc_" + uuid.uuid4().hex[:10]
     doc = {
         "doc_id": doc_id,
         "title": meta.get("title", ""),
@@ -281,7 +287,7 @@ def ingest_document(meta: dict, body: str) -> dict:
             "claim_type": c.get("type") or "fact",
             "summary": c.get("summary", ""),
             "quote": c.get("quote", ""),
-            "subjects": json.dumps(c.get("subjects", []), ensure_ascii=False),
+            "subjects": json.dumps(llm.canonicalize_subjects(c.get("subjects")), ensure_ascii=False),
             "core_proposition": c.get("core_proposition", ""),
             "event_time": c.get("event_time", ""),
             "evidence_weight": 0,

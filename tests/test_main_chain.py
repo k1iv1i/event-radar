@@ -128,9 +128,9 @@ def test_offline_cache_replay_is_deterministic(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "RAW_DIR", raw_dir)
 
     from scripts.bootstrap_demo import main
-    assert main() == 0
+    assert main([]) == 0
     n_events = len(db.list_events())
     assert n_events == 1
     assert db.list_events()[0]["status"] == "confirmed"
-    assert main() == 0  # 重放不崩溃，事件数不变
+    assert main([]) == 0  # 重放不崩溃，事件数不变
     assert len(db.list_events()) == n_events

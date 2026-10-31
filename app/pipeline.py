@@ -373,6 +373,7 @@ def _merge_events(keep: dict, absorb: dict, reason: str = "") -> dict:
     cands = [t for t in (keep.get("latest_disclose") or "", absorb.get("latest_disclose") or "") if t]
     keep["latest_disclose"] = max(cands) if cands else ""
 
+    keep["conclusion"] = json.dumps(conclusion, ensure_ascii=False)  # 先落盘并集，再重算状态
     db.move_claims(absorb["event_id"], keep["event_id"])
     db.move_versions(absorb["event_id"], keep["event_id"])
     _recompute_status(keep)

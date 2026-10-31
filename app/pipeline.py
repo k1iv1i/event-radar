@@ -131,7 +131,12 @@ def _apply_claim(event: dict, claim: dict, doc: dict) -> list[dict]:
     if not prop_key:
         prop_key = llm._normalize_proposition(doc.get("title") or "")
     conclusion = json.loads(conclusion_before)
-    propositions = conclusion.get("propositions") or {}
+    if not isinstance(conclusion, dict):
+        conclusion = {}
+    propositions = conclusion.get("propositions")
+    if not isinstance(propositions, dict):
+        propositions = {}
+        conclusion["propositions"] = propositions  # 必须挂回 conclusion，避免孤儿字典
     verdict = _verdict_for(claim, doc)
     prop = propositions.get(prop_key)
     flipped = False
@@ -154,32 +159,38 @@ def _apply_claim(event: dict, claim: dict, doc: dict) -> list[dict]:
     prop["claims"] += 1
     weight = _evidence_weight(doc, claim.get("claim_type"))
 
+    VERDICT_RANK = {"unverified": 0, "confirmed": 1, "denied": 1, "corrected": 2, "closed": 3}
+
     if verdict:
         prop["authoritative_weight"] += weight
         if verdict != prop["verdict"] and verdict in ("confirmed", "denied", "corrected", "closed"):
-            flipped = True
-            if prop["verdict"] in ("confirmed", "denied", "corrected", "closed"):
-                prop["verdict"] = "disputed"  # 证据冲突
+            new_rank, cur_rank = VERDICT_RANK[verdict], VERDICT_RANK.get(prop["verdict"], 0)
+            if new_rank > cur_rank:
+                flipped = True
+                prop["verdict"] = verdict  # 更高优先级判定取代旧判定（如完结取代证实）
+                change, notif_type = verdict, "state_change" if verdict != "closed" else "closed"
+                msg = f"命题「{prop['proposition']}」判定更新为【{compliance.VERDICT_CN.get(verdict, verdict)}】"
+            elif new_rank == cur_rank:
+                flipped = True
+                prop["verdict"] = "disputed"  # 同优先级判定冲突（证实 vs 否认）
                 change, notif_type = "disputed", "conflict"
                 msg = f"新证据与既有判定冲突，命题「{prop['proposition']}」进入证据冲突状态"
             else:
-                prop["verdict"] = verdict
-                change = verdict
-                notif_type = "state_change" if verdict != "closed" else "closed"
-                msg = f"命题「{prop['proposition']}」判定变为【{compliance.VERDICT_CN.get(verdict, verdict)}】"
-            prop["by_source"] = f"{doc.get('publisher', '')} · {doc.get('source', '')}"
-            prop["by_time"] = doc.get("disclose_time") or ""
-            prop["by_weight"] = weight
-            prop["by_doc"] = doc["doc_id"]
-            event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
-            db.insert_version({"event_id": event["event_id"], "change_type": change,
-                               "trigger_doc_id": doc["doc_id"], "summary": msg,
-                               "conclusion_before": conclusion_before,
-                               "conclusion_after": event["conclusion"], "created_at": now_iso()})
-            notifs.append({"event_id": event["event_id"], "notif_type": notif_type,
-                           "title": f"结论更新：{event['title']}",
-                           "message": f"{msg}。依据：{doc['title']}（{doc.get('disclose_time') or '时间未知'}）",
-                           "created_at": now_iso()})
+                flipped = False  # 低优先级判定不覆盖高优先级，仅作证据更新
+            if flipped:
+                prop["by_source"] = f"{doc.get('publisher', '')} · {doc.get('source', '')}"
+                prop["by_time"] = doc.get("disclose_time") or ""
+                prop["by_weight"] = weight
+                prop["by_doc"] = doc["doc_id"]
+                event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
+                db.insert_version({"event_id": event["event_id"], "change_type": change,
+                                   "trigger_doc_id": doc["doc_id"], "summary": msg,
+                                   "conclusion_before": conclusion_before,
+                                   "conclusion_after": event["conclusion"], "created_at": now_iso()})
+                notifs.append({"event_id": event["event_id"], "notif_type": notif_type,
+                               "title": f"结论更新：{event['title']}",
+                               "message": f"{msg}。依据：{doc['title']}（{doc.get('disclose_time') or '时间未知'}）",
+                               "created_at": now_iso()})
 
     if not flipped:
         # 每条证据都留痕：非判定类主张与"同判定加强"的事实均记入版本
@@ -200,7 +211,12 @@ def _apply_claim(event: dict, claim: dict, doc: dict) -> list[dict]:
 
 def _recompute_status(event: dict) -> None:
     conclusion = json.loads(event.get("conclusion") or "{}")
-    propositions = conclusion.get("propositions") or {}
+    if not isinstance(conclusion, dict):
+        conclusion = {}
+    propositions = conclusion.get("propositions")
+    if not isinstance(propositions, dict):
+        propositions = {}
+        conclusion["propositions"] = propositions
     if not propositions:
         return
     if any(p["verdict"] == "disputed" for p in propositions.values()):
@@ -211,8 +227,6 @@ def _recompute_status(event: dict) -> None:
         if status == "unverified":
             has_fact = db.count_event_claims(event["event_id"]).get("fact", 0) > 0
             status = "developing" if has_fact else "emerging"
-        if status not in ("closed", "denied", "corrected", "confirmed"):
-            status = "developing"
     conclusion["evidence_counts"] = db.count_event_claims(event["event_id"])
     conclusion["statement"] = compliance.build_statement(event, list(propositions.values()))
     event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
@@ -234,6 +248,7 @@ def ingest_document(meta: dict, body: str) -> dict:
         "body": body,
         "body_complete": int(meta.get("body_complete", 1)),
         "fetch_status": "ok",
+        "proposition_hint": meta.get("proposition_hint", ""),
     }
     db.insert_document(doc)
 
@@ -270,7 +285,8 @@ def ingest_document(meta: dict, body: str) -> dict:
         # 更新时间戳与状态
         _recompute_status(event)
         disclose = doc.get("disclose_time") or ""
-        event["latest_disclose"] = max(filter(None, [event.get("latest_disclose") or "", disclose])) or disclose
+        candidates = [t for t in (event.get("latest_disclose") or "", disclose) if t]
+        event["latest_disclose"] = max(candidates) if candidates else ""
         event["event_time"] = claim.get("event_time") or event.get("event_time") or ""
         event["primary_doc_id"] = event.get("primary_doc_id") or doc_id
         event["updated_at"] = now_iso()

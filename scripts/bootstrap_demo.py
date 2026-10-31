@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import config, db, pipeline  # noqa: E402
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--offline", action="store_true", help="仅用缓存抽取结果，不调用 LLM")
-    args = ap.parse_args()
+    args = ap.parse_args(argv if argv is not None else [])
     if args.offline:
         config.LLM_ENABLED = False
 

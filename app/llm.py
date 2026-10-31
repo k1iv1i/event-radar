@@ -110,6 +110,8 @@ def rule_extract_claims(doc: dict) -> list[dict]:
     """离线规则抽取：关键词分类 + 别名主体匹配。精度低于 LLM，仅作降级兜底。"""
     text = f"{doc.get('title', '')}。{doc.get('body', '')}"
     subjects = _find_subjects(text)
+    # 命题提示：规则模式无法理解语义，允许文档元数据显式给出核心命题
+    prop_hint = doc.get("proposition_hint") or doc.get("title", "")[:50]
     sentences = [s.strip() for s in re.split(r"[。；;\n]", text) if len(s.strip()) > 10]
     claims = []
     kw_hits = []
@@ -135,7 +137,7 @@ def rule_extract_claims(doc: dict) -> list[dict]:
                 "quote": s[:200],
                 "subjects": subjects,
                 "event_time": doc.get("event_time") or "",
-                "core_proposition": doc.get("title", "")[:50],
+                "core_proposition": prop_hint,
             }
         )
     # 澄清/更正/完结类文档：即使未抽出句子也生成一条对应类型主张
@@ -146,17 +148,17 @@ def rule_extract_claims(doc: dict) -> list[dict]:
         s = deny[0][0]
         claims.insert(0, {"type": "fact", "summary": "官方否认：" + s[:60], "quote": s[:200],
                           "subjects": subjects, "event_time": doc.get("event_time") or "",
-                          "core_proposition": doc.get("title", "")[:50]})
+                          "core_proposition": prop_hint})
     for label, arr in (("close", close), ("correct", correct)):
         if arr:
             s = arr[0][0]
             claims.append({"type": "fact", "summary": f"({label})" + s[:60], "quote": s[:200],
                            "subjects": subjects, "event_time": doc.get("event_time") or "",
-                           "core_proposition": doc.get("title", "")[:50]})
+                           "core_proposition": prop_hint})
     return claims or [{
         "type": "fact", "summary": doc.get("title", ""), "quote": sentences[0][:200] if sentences else doc.get("title", ""),
         "subjects": subjects, "event_time": doc.get("event_time") or "",
-        "core_proposition": doc.get("title", "")[:50],
+        "core_proposition": prop_hint,
     }]
 
 

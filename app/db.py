@@ -233,6 +233,21 @@ def mark_notification_read(notif_id: int):
         conn.execute("UPDATE notifications SET read=1 WHERE notif_id=?", (notif_id,))
 
 
+def move_claims(from_event: str, to_event: str):
+    with connect() as conn:
+        conn.execute("UPDATE claims SET event_id=? WHERE event_id=?", (to_event, from_event))
+
+
+def move_versions(from_event: str, to_event: str):
+    with connect() as conn:
+        conn.execute("UPDATE versions SET event_id=? WHERE event_id=?", (to_event, from_event))
+
+
+def delete_event(event_id: str):
+    with connect() as conn:
+        conn.execute("DELETE FROM events WHERE event_id=?", (event_id,))
+
+
 def has_notification_of_type(event_id: str, notif_type: str) -> bool:
     with connect() as conn:
         row = conn.execute(

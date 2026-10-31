@@ -18,7 +18,7 @@ ENTITY_ALIASES = {
     "中航电测": ["中航电测", "300114"],
     "左江科技": ["左江科技", "*st左江", "st左江", "左江退", "左江", "300799"],
     "法尔胜": ["法尔胜", "000890"],
-    "百利电气": ["百利电气", "600468"],
+    "百利电气": ["百利电气", "百利特精", "600468"],
     "国缆检测": ["国缆检测", "301289"],
     "贵航股份": ["贵航股份"],
     "韩国团队": ["韩国", "lk-99", "lk99"],
@@ -73,8 +73,20 @@ EXTRACT_PROMPT = """你是投资事件情报抽取器。输入一篇金融文档
 MERGE_PROMPT = """你是投资事件合并判定器。判断新主张应并入哪个已有事件，还是创建新事件。
 已有事件列表（JSON，含 event_id、title、topic）：{events}
 新主张信息在用户消息的 JSON 中给出。
-判定规则：若新主张与某事件讨论同一件事（同一主体+同一事件实质，即使结论相反也应合并，如"否认传闻"应并入该传闻事件），输出 merge 并给出该事件 id；否则输出 new。
+判定规则（从宽合并，事件按"事件线"组织）：
+1. 与某事件共享任一公司主体：新主张涉及该公司的监管（立案/问询/处罚）、经营业绩、股价异动、退市、诉讼索赔、媒体质疑等，均属该公司同一事件线 → 一律 merge 到该事件；仅当新主张是关于该公司完全无关的另一业务事项（如另一条产品线的订单）时才可 new；
+2. 与某事件话题实质相同（如"LK-99 论文发布"与"A股超导概念股大涨"是同一事件的不同侧面；"否认传闻"必须并入该传闻所在事件）→ merge；
+3. 只有明显不同的独立事项（不同公司、或同公司完全无关的独立业务事项）才输出 new。
 只输出 JSON：{{"decision":"merge|new","event_id":"...或空","reason":"一句中文理由"}}"""
+
+PAIR_MERGE_PROMPT = """你是投资事件合并判定器。判断两个已建立的事件是否属于同一事件线，应当合并。
+事件 A：title={title_a}，topic={topic_a}
+事件 B：title={title_b}，topic={topic_b}
+判定规则（从宽合并，事件按"事件线"组织）：
+1. 两事件共享任一公司主体，且涉及该公司的监管、经营业绩、股价、退市、诉讼、媒体质疑等事件线 → 合并（merge）；
+2. 两事件话题实质相同（同一科学发现与其市场反应、同一重组的各阶段）→ 合并（merge）；
+3. 仅当两事件是明显不同的独立事项（不同公司且话题无关、或同公司完全无关的另一业务线，如"成飞集成锂电重组"与"成飞集团借壳上市"）才输出 keep。
+只输出 JSON：{{"decision":"merge|keep","reason":"一句中文理由"}}"""
 
 
 def now_iso() -> str:
@@ -278,4 +290,50 @@ def judge_merge(events: list[dict], claim: dict) -> dict:
                 break
         result = {"decision": "merge", "event_id": cand["event_id"], "reason": "降级规则：主体/话题交集"} if cand else {
             "decision": "new", "event_id": "", "reason": "降级规则：无主体或话题交集"}
+    return result
+
+
+def judge_event_pair(event_a: dict, event_b: dict) -> dict:
+    """事件对合并判定：判断两个已建立的事件是否同属一条事件线。"""
+    key = hashlib.md5(
+        json.dumps(sorted([
+            (event_a.get("title") or "") + "|" + (event_a.get("topic") or ""),
+            (event_b.get("title") or "") + "|" + (event_b.get("topic") or ""),
+        ]), ensure_ascii=False).encode()
+    ).hexdigest()[:16]
+    cache = _load_cache(f"merge_{key}")
+    if cache and "decision" in cache:
+        return cache["decision"]
+
+    result = None
+    if config.LLM_ENABLED:
+        try:
+            resp = _client().chat.completions.create(
+                model=config.DEEPSEEK_MODEL,
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=300,
+                messages=[
+                    {"role": "system", "content": PAIR_MERGE_PROMPT.format(
+                        title_a=event_a.get("title", ""), topic_a=event_a.get("topic", ""),
+                        title_b=event_b.get("title", ""), topic_b=event_b.get("topic", ""))},
+                    {"role": "user", "content": "请判定并输出 JSON。"},
+                ],
+            )
+            data = json.loads(resp.choices[0].message.content)
+            if data.get("decision") in ("merge", "keep"):
+                result = data
+                _save_cache(f"merge_{key}", {"decision": result, "at": now_iso()})
+        except Exception:
+            result = None
+    if result is None:
+        # 降级：共享主体或话题关键词一致 → 合并
+        shared = set(_as_list(event_a.get("entity_tags"))) & set(_as_list(event_b.get("entity_tags")))
+        topic_b = (event_b.get("topic") or "").lower()
+        kws = [k for kws in KEYWORD_BUCKETS.values() for k in kws]
+        same_topic = any(k in (event_a.get("topic") or "").lower() and k in topic_b for k in kws if len(k) >= 3)
+        if shared or same_topic:
+            result = {"decision": "merge", "reason": "降级规则：共享主体或话题关键词"}
+        else:
+            result = {"decision": "keep", "reason": "降级规则：无共享主体或话题"}
     return result

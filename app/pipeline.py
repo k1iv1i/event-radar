@@ -37,9 +37,12 @@ def _bucket_of(text: str) -> str:
     return ""
 
 
-def _score_candidates(events: list[dict], claim: dict) -> list[tuple[dict, int]]:
+def _score_candidates(events: list[dict], claim: dict, doc_text: str = "") -> list[tuple[dict, int]]:
     """规则打分：主体交集(每个+2) + 命题/标题一致(+3) + 关键词桶一致(+1)。"""
-    claim_bucket = _bucket_of(claim.get("core_proposition", "") + claim.get("summary", "") + claim.get("quote", ""))
+    # 关键词桶综合主张文本与整篇文档文本（如"开盘跌停"本身无关键词，但文档通篇在讲借壳）
+    claim_bucket = _bucket_of(
+        claim.get("core_proposition", "") + claim.get("summary", "") + claim.get("quote", "") + doc_text
+    )
     claim_prop = llm._normalize_proposition(claim.get("core_proposition") or "")
     scored = []
     for e in events:
@@ -62,13 +65,14 @@ def _score_candidates(events: list[dict], claim: dict) -> list[tuple[dict, int]]
     return scored
 
 
-def _find_or_create_event(claim: dict) -> dict:
+def _find_or_create_event(claim: dict, doc_text: str = "") -> tuple[dict, bool]:
+    """返回 (event, is_new)。"""
     events = db.list_events()
-    scored = _score_candidates(events, claim)
+    scored = _score_candidates(events, claim, doc_text)
     if not scored:
-        return _create_event(claim)
+        return _create_event(claim), True
     if scored[0][1] >= 3:  # 主体交集 + 关键词桶，明确合并
-        return scored[0][0]
+        return scored[0][0], False
     # 灰区：桶一致但主体无交集等 -> LLM 判定（缓存/降级）
     candidates = [
         {"event_id": e["event_id"], "title": e["title"], "entity_tags": e["entity_tags"],
@@ -79,8 +83,8 @@ def _find_or_create_event(claim: dict) -> dict:
     if decision.get("decision") == "merge" and decision.get("event_id"):
         for e, _ in scored:
             if e["event_id"] == decision["event_id"]:
-                return e
-    return _create_event(claim)
+                return e, False
+    return _create_event(claim), True
 
 
 def _create_event(claim: dict) -> dict:
@@ -250,10 +254,11 @@ def _recompute_status(event: dict) -> None:
     event["conclusion"] = json.dumps(conclusion, ensure_ascii=False)
 
 
-def ingest_document(meta: dict, body: str, doc_id: str | None = None) -> dict:
+def ingest_document(meta: dict, body: str, doc_id: str | None = None, consolidate: bool = True) -> dict:
     """主链路入口。meta: title/source/publisher/url/publish_time/event_time。
 
     doc_id 不传时随机生成（在线入库）；bootstrap 回放时传稳定文件名，便于缓存复用与审计。
+    consolidate=True 时在入库末尾运行事件合并后处理（批量回放可关闭，最后统一跑一次）。
     """
     doc_id = doc_id or "doc_" + uuid.uuid4().hex[:10]
     doc = {
@@ -293,8 +298,14 @@ def ingest_document(meta: dict, body: str, doc_id: str | None = None) -> dict:
             "evidence_weight": 0,
             "extraction_method": method,
         }
-        event = _find_or_create_event(claim)
+        doc_text = f"{doc.get('title', '')} {doc.get('body', '')}"
+        event, is_new = _find_or_create_event(claim, doc_text)
         claim["event_id"] = event["event_id"]
+        if not is_new:
+            # 事件主体随合并累积，提升后续匹配能力
+            merged_tags = list(dict.fromkeys(
+                llm._as_list(event.get("entity_tags")) + llm._as_list(claim.get("subjects"))))
+            event["entity_tags"] = json.dumps(merged_tags, ensure_ascii=False)
         claim["evidence_weight"] = _evidence_weight(doc, claim["claim_type"])
         db.insert_claim(claim)
         notifs = _apply_claim(event, claim, doc)
@@ -314,8 +325,93 @@ def ingest_document(meta: dict, body: str, doc_id: str | None = None) -> dict:
 
     for n in all_notifs:
         db.insert_notification(n)
+    merged = consolidate_events() if consolidate else []
     return {"doc_id": doc_id, "fetch_status": doc["fetch_status"], "extraction_method": method,
-            "claims": len(claims), "changes": changes, "notifications": all_notifs}
+            "claims": len(claims), "changes": changes, "notifications": all_notifs,
+            "merged_events": merged}
+
+
+def _affinity_pairs(events: list[dict]) -> list[tuple[dict, dict]]:
+    """事件对亲和候选：共享主体，或话题关键词桶一致。"""
+    pairs = []
+    for i in range(len(events)):
+        for j in range(i + 1, len(events)):
+            a, b = events[i], events[j]
+            shared = set(llm._as_list(a.get("entity_tags"))) & set(llm._as_list(b.get("entity_tags")))
+            bucket_a = _bucket_of(_event_topic(a))
+            bucket_b = _bucket_of(_event_topic(b))
+            if shared or (bucket_a and bucket_a == bucket_b):
+                pairs.append((a, b))
+    return pairs
+
+
+def _merge_events(keep: dict, absorb: dict, reason: str = "") -> dict:
+    """把 absorb 并入 keep：主张/版本迁移、命题并集、标签合并、版本留痕、通知。"""
+    conclusion = json.loads(keep.get("conclusion") or "{}")
+    if not isinstance(conclusion, dict):
+        conclusion = {}
+    props = conclusion.get("propositions")
+    if not isinstance(props, dict):
+        props = {}
+        conclusion["propositions"] = props
+    other = json.loads(absorb.get("conclusion") or "{}")
+    for key, p in (other.get("propositions") or {}).items():
+        if key in props:
+            props[key]["claims"] = props[key].get("claims", 0) + p.get("claims", 0)
+            props[key]["authoritative_weight"] = props[key].get("authoritative_weight", 0) + p.get("authoritative_weight", 0)
+            rank = {"unverified": 0, "confirmed": 1, "denied": 1, "corrected": 2, "closed": 3}
+            if rank.get(p.get("verdict"), 0) > rank.get(props[key].get("verdict"), 0):
+                props[key].update({k: p.get(k) for k in ("verdict", "by_source", "by_time", "by_weight", "by_doc")})
+        else:
+            props[key] = p
+
+    merged_tags = list(dict.fromkeys(
+        llm._as_list(keep.get("entity_tags")) + llm._as_list(absorb.get("entity_tags"))))
+    keep["entity_tags"] = json.dumps(merged_tags, ensure_ascii=False)
+    time_cands = [t for t in (keep.get("event_time") or "", absorb.get("event_time") or "") if t]
+    keep["event_time"] = min(time_cands) if time_cands else ""
+    cands = [t for t in (keep.get("latest_disclose") or "", absorb.get("latest_disclose") or "") if t]
+    keep["latest_disclose"] = max(cands) if cands else ""
+
+    db.move_claims(absorb["event_id"], keep["event_id"])
+    db.move_versions(absorb["event_id"], keep["event_id"])
+    _recompute_status(keep)
+    db.insert_version({"event_id": keep["event_id"], "change_type": "merge",
+                       "trigger_doc_id": "", "summary": f"事件合并：吸收「{absorb.get('title', '')}」（{reason or '同一事件线'}）",
+                       "conclusion_before": "", "conclusion_after": keep["conclusion"],
+                       "created_at": now_iso()})
+    db.insert_notification({"event_id": keep["event_id"], "notif_type": "merge_event",
+                            "title": f"事件合并：{keep['title']}",
+                            "message": f"系统识别「{absorb.get('title', '')}」与本事件同属一条事件线（{reason or '同一事件线'}），已合并证据与版本历史。",
+                            "created_at": now_iso()})
+    db.delete_event(absorb["event_id"])
+    db.insert_event(keep)
+    return keep
+
+
+def consolidate_events(max_rounds: int = 3) -> list[dict]:
+    """事件合并后处理：对亲和事件对做两两判定并合并（主链路"合并"环节的显式实现）。"""
+    merged_log = []
+    for _ in range(max_rounds):
+        events = db.list_events()
+        pairs = _affinity_pairs(events)
+        if not pairs:
+            break
+        changed = False
+        for a, b in pairs:
+            if db.get_event(a["event_id"]) is None or db.get_event(b["event_id"]) is None:
+                continue
+            a, b = db.get_event(a["event_id"]), db.get_event(b["event_id"])
+            decision = llm.judge_event_pair(
+                {**a, "topic": _event_topic(a)}, {**b, "topic": _event_topic(b)})
+            if decision.get("decision") == "merge":
+                _merge_events(a, b, decision.get("reason", ""))
+                merged_log.append({"from": b["event_id"], "to": a["event_id"],
+                                   "reason": decision.get("reason", "")})
+                changed = True
+        if not changed:
+            break
+    return merged_log
 
 
 def apply_expiry(event: dict) -> bool:

@@ -31,9 +31,13 @@ def main(argv=None):
     for p in files:
         meta = json.loads(p.read_text(encoding="utf-8"))
         body = meta.pop("body", "")
-        res = pipeline.ingest_document(meta, body, doc_id=p.stem)  # 稳定 doc_id = 原始文件名
+        res = pipeline.ingest_document(meta, body, doc_id=p.stem, consolidate=False)
         print(f"  - {p.stem}: {res['claims']} 条主张 ({res['extraction_method']}), "
               f"{len(res['notifications'])} 条通知")
+
+    merged = pipeline.consolidate_events()
+    for m in merged:
+        print(f"  [merge] {m['from'][:10]} -> {m['to'][:10]}：{m['reason'][:40]}")
 
     print("\n[bootstrap] 事件总览：")
     for e in db.list_events():

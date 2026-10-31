@@ -346,3 +346,85 @@ a:hover { text-decoration: underline; }
   .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--hairline); }
   .stat-chips { display: none; }
 }
+
+/* ================= v2：首页与事件页 ================= */
+.hero { max-width: 760px; margin: 0 auto; padding: 56px 24px 8px; text-align: center; }
+.hero h2 { font-size: 26px; font-weight: 600; letter-spacing: .04em; }
+.hero-sub { color: var(--ink-2); font-size: 14px; margin-top: 10px; line-height: 1.7; }
+
+.event-grid { max-width: 760px; margin: 36px auto 0; padding: 0 24px; display: flex; flex-direction: column; gap: 14px; }
+.ev-card {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
+  padding: 20px 22px; cursor: pointer; transition: border-color .15s, transform .15s;
+  position: relative;
+}
+.ev-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.ev-card-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ev-card-head h3 { font-size: 16px; font-weight: 600; flex: 1; min-width: 200px; line-height: 1.45; }
+.ev-card-main { color: var(--ink-2); font-size: 13.5px; margin-top: 8px; }
+.ev-card-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ev-card-meta {
+  display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 12px;
+  font-size: 12px; color: var(--ink-3); border-top: 1px solid var(--hairline); padding-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ev-card-go { margin-left: auto; color: var(--accent); }
+.home-foot { max-width: 760px; margin: 40px auto 0; padding: 0 24px 40px; text-align: center; }
+.home-stats { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.home-stats b { color: var(--ink-2); }
+.home-foot .disc { font-size: 11.5px; color: var(--ink-3); margin-top: 14px; line-height: 1.7; }
+
+.back-btn {
+  background: none; border: 1px solid var(--hairline); color: var(--ink-2);
+  border-radius: 6px; padding: 5px 14px; cursor: pointer; font-size: 13px;
+  margin: 20px 0 0 28px;
+}
+.back-btn:hover { border-color: var(--accent); color: var(--ink); }
+
+#eventView { max-width: 980px; margin: 0 auto; padding: 0 28px 60px; }
+.ev-header { margin-top: 20px; }
+.ev-header h2 { font-size: 20px; font-weight: 600; line-height: 1.5; }
+.ev-header-badges { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.ev-header .entity-tags { color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+
+/* 四个时间戳：大格子重点突出 */
+.ts-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0 24px; }
+.ts-tile {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
+}
+.ts-tile-lab { font-size: 11px; color: var(--ink-3); letter-spacing: .08em; }
+.ts-tile b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ts-tile-hint { font-size: 11px; color: var(--ink-3); }
+@media (max-width: 720px) { .ts-tiles { grid-template-columns: repeat(2, 1fr); } }
+
+/* 时间轴 */
+#timelinePanel { padding: 14px 8px 6px; overflow-x: auto; }
+#timelinePanel svg { min-width: 860px; display: block; }
+
+/* 结论变化与通知 */
+.flip-list { display: flex; flex-direction: column; gap: 8px; }
+.flip-row {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 9px 4px; border-bottom: 1px solid var(--hairline); font-size: 13px;
+}
+.flip-row:last-child { border-bottom: none; }
+.flip-time { color: var(--ink-3); font-size: 12px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.flip-summary { flex: 1; min-width: 200px; }
+.flip-src { color: var(--ink-3); font-size: 12px; }
+.flip-notify { color: var(--accent); font-size: 12px; flex-shrink: 0; }
+
+/* 命题判定 */
+.prop-list { display: flex; flex-direction: column; gap: 2px; }
+.prop-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
+.prop-row:last-child { border-bottom: none; }
+.prop-name { flex: 1; }
+.prop-basis { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* 折叠明细 */
+details.fold summary { cursor: pointer; list-style: none; }
+details.fold summary::-webkit-details-marker { display: none; }
+details.fold summary h4 { display: inline-flex; align-items: center; }
+details.fold summary h4::after { content: "▸"; margin-left: 8px; color: var(--ink-3); transition: transform .15s; }
+details.fold[open] summary h4::after { transform: rotate(90deg); }
+details.fold[open] { padding-bottom: 10px; }

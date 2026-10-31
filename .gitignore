@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+data/timeline.db
+data/extracted/
+.pytest_cache/
+.venv/
+node_modules/
+.DS_Store

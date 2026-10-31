@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>事件雷达 · 投资事件情报与证据时间线</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◈</span>
+    <div>
+      <h1>事件雷达</h1>
+      <p class="subtitle">投资事件情报与证据时间线 · 事实 / 观点 / 推测 / 传闻逐条可溯</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div id="statChips" class="stat-chips"></div>
+    <button id="bellBtn" class="bell" title="通知中心">
+      🔔<span id="unreadBadge" class="badge hidden">0</span>
+    </button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span>事件列表</span>
+      <button id="addDocBtn" class="btn btn-primary btn-sm">+ 提交新文档</button>
+    </div>
+    <div id="eventList" class="event-list"></div>
+  </aside>
+
+  <main class="content">
+    <div id="emptyState" class="empty">
+      <p>← 选择一个事件查看证据时间线</p>
+    </div>
+    <div id="detail" class="detail hidden"></div>
+  </main>
+</div>
+
+<div id="notifDrawer" class="drawer hidden">
+  <div class="drawer-head">
+    <span>通知中心</span>
+    <button id="closeNotif" class="close-btn">✕</button>
+  </div>
+  <div id="notifList" class="notif-list"></div>
+</div>
+
+<div id="ingestModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>提交新文档（在线走主链路：入库 → 抽取 → 合并 → 判定 → 通知）</span>
+      <button id="closeIngest" class="close-btn">✕</button>
+    </div>
+    <label>标题 <input id="ingTitle" type="text" placeholder="如：XX公司关于市场传闻的澄清公告"></label>
+    <div class="row2">
+      <label>来源类型
+        <select id="ingSource">
+          <option>公司公告</option><option>官方公告</option><option>权威媒体</option>
+          <option>一般媒体</option><option>研报</option><option>互动易</option><option>社交媒体</option>
+        </select>
+      </label>
+      <label>发布方 <input id="ingPublisher" type="text" placeholder="如：巨潮资讯"></label>
+    </div>
+    <div class="row2">
+      <label>披露时间 <input id="ingPublishTime" type="text" placeholder="2026-10-31"></label>
+      <label>事件发生时间 <input id="ingEventTime" type="text" placeholder="2026-10-30（可空）"></label>
+    </div>
+    <label>原文链接 <input id="ingUrl" type="text" placeholder="https://…"></label>
+    <label>正文（保留关键原句）
+      <textarea id="ingBody" rows="7" placeholder="粘贴公告或新闻正文……"></textarea>
+    </label>
+    <div class="modal-actions">
+      <button id="cancelIngest" class="btn">取消</button>
+      <button id="submitIngest" class="btn btn-primary">提交并分析</button>
+    </div>
+    <div id="ingestResult" class="ingest-result hidden"></div>
+  </div>
+</div>
+
+<footer class="footer">
+  <span id="footerDisclaimer"></span>
+</footer>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

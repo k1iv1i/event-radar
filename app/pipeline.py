@@ -140,6 +140,22 @@ def _propositions_of(event: dict) -> dict:
 
 
 TYPE_CN = {"fact": "事实", "opinion": "观点", "speculation": "推测", "rumor": "传闻"}
+VERDICT_RANK = {"unverified": 0, "confirmed": 1, "denied": 1, "corrected": 2, "closed": 3}
+
+
+def _match_prop_key(prop_key: str, propositions: dict) -> str | None:
+    """命题归并：先精确匹配，再模糊匹配（相似度 ≥ 0.75，如更正公告的命题与原文略有出入）。"""
+    if not prop_key:
+        return None
+    if prop_key in propositions:
+        return prop_key
+    from difflib import SequenceMatcher
+    best, best_ratio = None, 0.0
+    for key in propositions:
+        ratio = SequenceMatcher(None, prop_key, key).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = key, ratio
+    return best if best_ratio >= 0.75 else None
 
 
 def _apply_claim(event: dict, claim: dict, doc: dict) -> list[dict]:
@@ -157,6 +173,9 @@ def _apply_claim(event: dict, claim: dict, doc: dict) -> list[dict]:
         propositions = {}
         conclusion["propositions"] = propositions  # 必须挂回 conclusion，避免孤儿字典
     verdict = _verdict_for(claim, doc)
+    matched = _match_prop_key(prop_key, propositions)
+    if matched is not None:
+        prop_key = matched
     prop = propositions.get(prop_key)
     flipped = False
 
@@ -177,8 +196,6 @@ def _apply_claim(event: dict, claim: dict, doc: dict) -> list[dict]:
 
     prop["claims"] += 1
     weight = _evidence_weight(doc, claim.get("claim_type"))
-
-    VERDICT_RANK = {"unverified": 0, "confirmed": 1, "denied": 1, "corrected": 2, "closed": 3}
 
     if verdict:
         prop["authoritative_weight"] += weight
@@ -241,7 +258,9 @@ def _recompute_status(event: dict) -> None:
     if any(p["verdict"] == "disputed" for p in propositions.values()):
         status = "disputed"
     else:
-        dominant = max(propositions.values(), key=lambda p: p.get("authoritative_weight", 0))
+        # 主导命题 = 权威权重最高者；权重相同时由判定优先级决胜（更正/完结盖过证实/否认）
+        dominant = max(propositions.values(), key=lambda p: (
+            p.get("authoritative_weight", 0), VERDICT_RANK.get(p.get("verdict"), 0)))
         status = dominant.get("verdict") or "unverified"
         if status == "unverified":
             has_fact = db.count_event_claims(event["event_id"]).get("fact", 0) > 0

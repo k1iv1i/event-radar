@@ -14,6 +14,34 @@ const FLIP_TYPES = ["confirmed", "denied", "corrected", "closed", "disputed", "e
 const TYPE_COLOR = { fact: "#199e70", opinion: "#898781", speculation: "#3987e5", rumor: "#e66767" };
 const VERDICT_COLOR = { confirmed: "#0ca30c", denied: "#d03b3b", corrected: "#ec835a",
   closed: "#c3c2b7", disputed: "#fab219", unverified: "#898781" };
+const NOTIF_CN = { state_change: "结论更新", update: "事件更新", conflict: "证据冲突", closed: "事件完结",
+  expiry: "过期提醒", merge_event: "事件合并", new_event: "新事件" };
+
+/* 演示交互：内置构造文档（一键上传，展示更新/更正路径如何自动改变结论并通知） */
+const DEMO_DOCS = [
+  {
+    eventMatch: "左江",
+    label: "上传更正公告（演示更正路径）",
+    desc: "公司更正立案事由：结论将自动由「已证实」翻转为「已更正」并推送通知",
+    doc: {
+      title: "*ST左江：关于立案告知书内容更正的公告（演示用测试输入）",
+      source: "公司公告", publisher: "北京左江科技股份有限公司（演示构造）",
+      publish_time: "2025-11-01", url: "", event_time: "",
+      body: "北京左江科技股份有限公司（以下简称公司）现对前期《关于收到中国证券监督管理委员会立案告知书的公告》（公告编号：2023-076）予以更正：因工作人员录入错误，立案告知书中公司被立案调查的事由由涉嫌信息披露违法违规更正为涉嫌财务造假。除上述更正外，原公告其他内容不变。特此公告。",
+    },
+  },
+  {
+    eventMatch: "中航电测",
+    label: "上传进展公告（演示更新路径）",
+    desc: "新增重组实施进展事实：证据池更新、生成「事件更新」通知",
+    doc: {
+      title: "中航电测：关于重组实施进展的公告（演示用测试输入）",
+      source: "公司公告", publisher: "中航电测（演示构造）",
+      publish_time: "2025-11-01", url: "", event_time: "",
+      body: "中航电测仪器股份有限公司（以下简称公司）现就发行股份购买成都飞机工业（集团）有限责任公司100%股权事项的实施进展公告如下：截至本公告披露日，交易双方已完成全部资产交割手续，本次重组的实施工作已经全部完成，公司后续将依法办理相关工商变更登记手续。特此公告。",
+    },
+  },
+];
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -197,6 +225,26 @@ async function openEvent(id) {
     </section>
 
     <section class="section">
+      <h4>演示交互：新证据如何自动改变结论并通知</h4>
+      <div class="panel demo-box">
+        <p class="demo-note">内置演示构造文档，一键上传即走完整主链路：入库 → AI 抽取 → 事件合并 → 命题判定 → 结论更新 → 用户通知。</p>
+        <div class="demo-actions">
+          ${DEMO_DOCS.filter((x) => e.title.includes(x.eventMatch)).map((x, i) => `
+            <div class="demo-item">
+              <button class="btn btn-primary demo-btn" data-demo="${i}">${esc(x.label)}</button>
+              <span class="demo-desc">${esc(x.desc)}</span>
+            </div>`).join("") || `<div class="empty">该事件暂无内置演示文档</div>`}
+        </div>
+        <div id="demoResult" class="ingest-result hidden"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h4>本事件通知</h4>
+      <div class="panel" id="eventNotifs"><div class="empty">加载中…</div></div>
+    </section>
+
+    <section class="section">
       <h4>命题判定</h4>
       <div class="panel prop-list">${propCards || `<div class="empty">暂无命题</div>`}</div>
     </section>
@@ -215,6 +263,79 @@ async function openEvent(id) {
       <summary><h4>原始文档（${d.documents.length} 篇）</h4></summary>
       <div class="panel">${docsHtml}</div>
     </details>`;
+
+  document.querySelectorAll(".demo-btn").forEach((b) =>
+    b.addEventListener("click", () => submitDemo(b)));
+  loadEventNotifs(id);
+}
+
+/* ================= 演示交互 / 通知推送 ================= */
+async function submitDemo(btn) {
+  const spec = DEMO_DOCS[Number(btn.dataset.demo)];
+  btn.disabled = true; btn.textContent = "分析中…";
+  const box = $("demoResult");
+  box.classList.remove("hidden");
+  box.innerHTML = `<div class="ir-item">上传中，AI 正在抽取与判定…</div>`;
+  try {
+    const r = await api("/api/documents", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(spec.doc),
+    });
+    box.innerHTML = `
+      <div class="ir-item">✅ 已入库并抽取 <b>${r.claims}</b> 条主张（抽取方式：<b>${r.extraction_method}</b>${r.fetch_status === "degraded" ? "，⚠ LLM 接口异常已降级为规则抽取" : ""}）</div>
+      ${r.changes.map((c) => `<div class="ir-item">· 事件「${esc(c.event_id)}」：命题「${esc(c.proposition)}」记为 ${esc(TYPE_CN[c.claim_type])}</div>`).join("")}
+      ${r.notifications.length ? `<div class="ir-item">🔔 结论变化，已推送 ${r.notifications.length} 条通知（${r.notifications.map((n) => esc(n.message)).join("；")}）</div>` : `<div class="ir-item">🔕 未改变任何事件结论，无新通知</div>`}
+      <div class="ir-item">↻ 事件结论与时间轴已自动更新，正在刷新…</div>`;
+    const n0 = r.notifications[0];
+    if (n0) showToast(n0.title, n0.message, r.changes[0]?.event_id || selectedId);
+    notifCache = null;
+    setTimeout(() => { if (selectedId) openEvent(selectedId); }, 900);
+  } catch (e) {
+    box.innerHTML = `<div class="ir-item">提交失败：${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = spec.label;
+  }
+}
+
+function showToast(title, message, eventId) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.innerHTML = `<div class="toast-title">🔔 ${esc(title)}</div>
+    <div class="toast-msg">${esc(message)}</div>
+    <div class="toast-hint">点击查看事件 →</div>`;
+  t.addEventListener("click", () => { t.remove(); if (eventId) openEvent(eventId); });
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 8000);
+}
+
+let notifCache = null;
+async function loadEventNotifs(eventId) {
+  const el = $("eventNotifs");
+  if (!el) return;
+  if (!notifCache) {
+    const d = await api("/api/notifications");
+    notifCache = d.notifications;
+  }
+  const list = notifCache.filter((n) => n.event_id === eventId);
+  el.innerHTML = list.length ? list.map((n) => `
+    <div class="notif ${n.read ? "" : "unread"}">
+      <div class="n-title">${NOTIF_CN[n.notif_type] || n.notif_type} · ${esc(n.title)}</div>
+      <div class="n-msg">${esc(n.message)}</div>
+      <div class="n-time">${fmtTime(n.created_at)}${n.read ? "" : " · 未读"}</div>
+    </div>`).join("") : `<div class="empty">暂无通知</div>`;
+  for (const n of list) {
+    if (!n.read) { await api(`/api/notifications/${n.notif_id}/read`, { method: "POST" }); n.read = 1; }
+  }
+  updateBadge();
+}
+
+function updateBadge() {
+  const b = $("unreadBadge");
+  if (!notifCache) return;
+  const unread = notifCache.filter((n) => !n.read).length;
+  b.textContent = unread;
+  b.classList.toggle("hidden", unread === 0);
 }
 
 /* ================= 时间轴图（SVG） ================= */
@@ -293,18 +414,17 @@ function renderTimeline(claims, flipClaims, versionByDoc, concl) {
 /* ================= 通知 ================= */
 async function loadNotifs() {
   const data = await api("/api/notifications");
-  const unread = data.notifications.filter((n) => !n.read).length;
-  const b = $("unreadBadge");
-  b.textContent = unread;
-  b.classList.toggle("hidden", unread === 0);
+  notifCache = data.notifications;
+  updateBadge();
   $("notifList").innerHTML = data.notifications.map((n) => `
     <div class="notif ${n.read ? "" : "unread"}" data-id="${n.notif_id}" data-event="${esc(n.event_id || "")}">
-      <div class="n-title">${esc(n.title)}</div>
+      <div class="n-title">${NOTIF_CN[n.notif_type] || n.notif_type} · ${esc(n.title)}</div>
       <div class="n-msg">${esc(n.message)}</div>
-      <div class="n-time">${fmtTime(n.created_at)}</div>
+      <div class="n-time">${fmtTime(n.created_at)}${n.read ? "" : " · 未读"}</div>
     </div>`).join("") || `<div class="empty">暂无通知</div>`;
   document.querySelectorAll(".notif").forEach((el) => el.addEventListener("click", async () => {
     await api(`/api/notifications/${el.dataset.id}/read`, { method: "POST" });
+    notifCache = null;
     closeDrawer();
     if (el.dataset.event) openEvent(el.dataset.event);
   }));
@@ -340,6 +460,9 @@ async function submitIngest() {
       ${(r.merged_events || []).map(() => `<div class="ir-item">🔗 触发事件合并</div>`).join("")}
       ${r.notifications.length ? `<div class="ir-item">🔔 触发 ${r.notifications.length} 条通知（${r.notifications.map((n) => esc(n.message)).join("；")}）</div>` : `<div class="ir-item">🔕 未改变任何事件结论，无新通知</div>`}
     `;
+    const n0 = r.notifications[0];
+    if (n0) showToast(n0.title, n0.message, r.changes[0]?.event_id);
+    notifCache = null;
     if (r.changes[0]) openEvent(r.changes[0].event_id);
     closeIngest();
   } catch (e) {

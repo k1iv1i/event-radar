@@ -75,6 +75,24 @@ def test_closure_supersedes_and_versions_accumulate():
     assert all(v["conclusion_after"] for v in versions)
 
 
+def test_correction_flips_existing_proposition_via_fuzzy_match():
+    """更正公告的命题与原文略有出入时，模糊归并命中既有命题并翻转判定。"""
+    make_doc("立案公告", "*ST左江公告：因涉嫌信息披露违法违规被中国证监会立案调查。", source="公司公告",
+             publisher="*ST左江", publish_time="2023-12-01",
+             proposition_hint="*ST左江因涉嫌信息披露违法违规被中国证监会立案调查")
+    make_doc("更正公告", "公司更正：立案事由由涉嫌信息披露违法违规更正为涉嫌财务造假。", source="公司公告",
+             publisher="*ST左江", publish_time="2023-12-20",
+             proposition_hint="*ST左江因涉嫌信息披露违法违规被立案调查")  # 缺"中国证监会"，需模糊匹配
+    event = db.list_events()[0]
+    concl = json.loads(event["conclusion"])
+    props = concl["propositions"]
+    assert len(props) == 1  # 模糊归并为同一命题，而非新建
+    p = list(props.values())[0]
+    assert p["verdict"] == "corrected"  # 更正盖过证实
+    assert event["status"] == "corrected"
+    assert any(v["change_type"] == "corrected" for v in db.list_versions(event["event_id"]))
+
+
 def test_four_timestamps_recorded():
     make_doc("事件文档", "事实内容", publish_time="2025-03-01", event_time="2025-02-28")
     doc = db.list_documents()[0]

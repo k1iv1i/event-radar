@@ -3,6 +3,11 @@ const $ = (id) => document.getElementById(id);
 const TYPE_CN = { fact: "事实", opinion: "观点", speculation: "推测", rumor: "传闻" };
 const STATUS_CN = { emerging: "传闻阶段", developing: "发展中", confirmed: "已证实", denied: "已否认",
   corrected: "已更正", disputed: "证据冲突", closed: "已完结", expired: "已过期" };
+// 状态色板规则：状态永远 icon + label，颜色不单独表义
+const STATUS_ICON = { emerging: "◌", developing: "◔", confirmed: "✓", denied: "✕",
+  corrected: "↻", disputed: "⚠", closed: "●", expired: "○" };
+const VERDICT_ICON = { confirmed: "✓", denied: "✕", corrected: "↻", closed: "●",
+  disputed: "⚠", unverified: "·" };
 const CHANGE_CN = { create: "事件创建", proposition_added: "新增命题", update: "证据更新", rumor: "传闻证据",
   confirmed: "证实", denied: "否认", corrected: "更正", closed: "完结", disputed: "证据冲突", expired: "过期" };
 
@@ -40,13 +45,13 @@ async function loadEvents(selectId) {
     const props = (e.conclusion.propositions ? Object.values(e.conclusion.propositions) : [])
       .slice(0, 3)
       .map((p) => `<div class="prop-line">
-          <span class="badge-type verdict-${p.verdict}">${verdictCn(p.verdict)}</span>
+          <span class="verdict-badge verdict-${p.verdict}">${VERDICT_ICON[p.verdict] || "·"}${verdictCn(p.verdict)}</span>
           <span class="prop-text" title="${esc(p.proposition)}">${esc(p.proposition)}</span>
         </div>`).join("");
     return `<div class="event-card" data-id="${e.event_id}">
       <h3>${esc(e.title)}</h3>
       <div class="meta">
-        <span class="badge-status status-${e.status}">${STATUS_CN[e.status] || e.status}</span>
+        <span class="status-badge status-${e.status}">${STATUS_ICON[e.status] || "·"}${STATUS_CN[e.status] || e.status}</span>
         <span>更新 ${fmtTime(e.updated_at)}</span>
       </div>
       <div class="props">${props}</div>
@@ -77,7 +82,7 @@ async function selectEvent(id) {
   const propCards = (concl.propositions ? Object.values(concl.propositions) : []).map((p) => `
     <div class="panel prop-card">
       <div class="prop-head">
-        <span class="badge-type verdict-${p.verdict}">${verdictCn(p.verdict)}</span>
+        <span class="verdict-badge verdict-${p.verdict}">${VERDICT_ICON[p.verdict] || "·"}${verdictCn(p.verdict)}</span>
         <span class="prop-name">${esc(p.proposition)}</span>
       </div>
       <div class="prop-meta">证据 ${p.claims} 条 · 权威权重 <span class="weight-num">${p.authoritative_weight || 0}</span></div>
@@ -91,7 +96,7 @@ async function selectEvent(id) {
     <div class="tl-node type-${c.claim_type} ${flipDocs.has(c.doc_id) ? "flip" : ""}">
       <div class="tl-body">
         <div class="tl-head">
-          <span class="badge-type type-${c.claim_type}">${TYPE_CN[c.claim_type] || c.claim_type}</span>
+          <span class="type-badge type-${c.claim_type}">${TYPE_CN[c.claim_type] || c.claim_type}</span>
           <span class="summary">${esc(c.summary)}</span>
           <span class="weight-num">权重 ${c.evidence_weight}</span>
           ${doc.fetch_status === "degraded" ? `<span class="warn">⚠ 接口降级（规则抽取）</span>` : ""}
@@ -111,7 +116,7 @@ async function selectEvent(id) {
   const versionsHtml = d.versions.slice().reverse().map((v) => `
     <div class="ver-item">
       <span class="ver-no">v${v.version_no}</span>
-      <span class="badge-type change-${v.change_type}">${CHANGE_CN[v.change_type] || v.change_type}</span>
+      <span class="change-badge change-${v.change_type}">${CHANGE_CN[v.change_type] || v.change_type}</span>
       <span class="ver-summary">${esc(v.summary)}</span>
       <span class="ver-time">${fmtTime(v.created_at)}</span>
     </div>`).join("");
@@ -123,7 +128,7 @@ async function selectEvent(id) {
     </details>`).join("");
 
   detail.innerHTML = `
-    <h2>${esc(e.title)} <span class="badge-status status-${e.status}">${STATUS_CN[e.status] || e.status}</span></h2>
+    <h2>${esc(e.title)} <span class="status-badge status-${e.status}">${STATUS_ICON[e.status] || "·"}${STATUS_CN[e.status] || e.status}</span></h2>
     <div class="entity-tags">涉事主体：${esc((JSON.parse(e.entity_tags || "[]") || []).join("、") || "—")}</div>
     <div class="ts-row">
       <span><span class="ts-label">事件发生</span><b>${fmtTime(e.event_time)}</b></span>
